@@ -1,0 +1,160 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_ADS1015.h>
+#include <LiquidCrystal_I2C.h>
+#include <SoftwareSerial.h>
+
+// Constants
+#define BMP_SDA 4                 // BMP280 SDA pin
+#define BMP_SCL 5                 // BMP280 SCL pin
+#define ADS1115_ADDR 0x48         // ADS1115 I2C address
+#define HEARTBEAT_PIN 2           // Heartbeat sensor digital pin
+#define SUGAR_LEVEL_PIN A0        // Sugar level sensor analog pin
+
+// Variables
+Adafruit_BMP280 bmp;               // BMP280 sensor object
+Adafruit_ADS1115 ads(ADS1115_ADDR); // ADS1115 ADC object
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);   // LCD display object
+SoftwareSerial esp8266(10, 11);       // SoftwareSerial object for ESP8266 WiFi module
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  while (!Serial);
+
+  // Initialize BMP280 sensor
+  if (!bmp.begin(0x76)) {
+    Serial.println("Could not find a valid BMP280 sensor, check wiring!");
+    while (1);
+  }
+
+  // Initialize ADS1115 ADC
+  ads.begin();
+
+  // Initialize LCD display
+  lcd.begin(16, 2);
+  lcd.print("Health Monitoring");
+
+  // Initialize ESP8266 WiFi module
+  esp8266.begin(9600);
+  esp8266.setTimeout(1000);
+
+  // Connect to WiFi network
+  connectToWiFi();
+}
+
+void loop() {
+  // Read sensor data
+  float temperature = bmp.readTemperature();
+  float pressure = bmp.readPressure() / 100.0;
+  float sugarLevel = readSugarLevel();
+  int heartbeat = readHeartbeat();
+
+  // Display sensor data on LCD
+  displayData(temperature, pressure, sugarLevel, heartbeat);
+
+  // Send data to healthcare professionals via WiFi
+  sendDataToServer(temperature, pressure, sugarLevel, heartbeat);
+
+  // Delay before taking the next sensor reading
+  delay(2000);
+}
+
+float readSugarLevel() {
+  // Read analog value from sugar level sensor
+  int rawValue = analogRead(SUGAR_LEVEL_PIN);
+
+  // Convert analog value to sugar level percentage
+  float sugarLevel = map(rawValue, 0, 1023, 0, 100);
+
+  return sugarLevel;
+}
+
+int readHeartbeat() {
+  // Read digital value from heartbeat sensor
+  int heartbeat = digitalRead(HEARTBEAT_PIN);
+
+  return heartbeat;
+}
+
+void displayData(float temperature, float pressure, float sugarLevel, int heartbeat) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Temp: ");
+  lcd.print(temperature);
+  lcd.print(" C");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Press: ");
+  lcd.print(pressure);
+  lcd.print(" hPa");
+
+  delay(2000);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Sugar: ");
+  lcd.print(sugarLevel);
+  lcd.print("%");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Heartbeat: ");
+  lcd.print(heartbeat);
+
+  delay(2000);
+}
+
+void sendDataToServer(float temperature, float pressure, float sugarLevel, int heartbeat) {
+  // Connect to the server
+  esp8266.println("AT+CIPSTART=\"TCP\",\"your_server_ip\",your_server_port");
+  if (esp8266.find("OK")) {
+    Serial.println("Connected to server");
+  } else {
+    Serial.println("Connection to server failed");
+    return;
+  }
+
+  // Send sensor data to the server
+  String postData = "temperature=" + String(temperature) +
+                    "&pressure=" + String(pressure) +
+                    "&sugarLevel=" + String(sugarLevel) +
+                    "&heartbeat=" + String(heartbeat);
+
+  String postRequest = "POST /your_api_endpoint HTTP/1.1\r\n" +
+                       "Host: your_server_ip\r\n" +
+                       "Content-Type: application/x-www-form-urlencoded\r\n" +
+                       "Content-Length: " + String(postData.length()) + "\r\n\r\n" +
+                       postData;
+
+  esp8266.print("AT+CIPSEND=");
+  esp8266.println(postRequest.length());
+  if (esp8266.find(">")) {
+    Serial.println("Sending data...");
+    esp8266.print(postRequest);
+
+    if (esp8266.find("SEND OK")) {
+      Serial.println("Data sent successfully");
+    } else {
+      Serial.println("Data sending failed");
+    }
+  }
+
+  // Close the connection
+  esp8266.println("AT+CIPCLOSE");
+}
+
+void connectToWiFi() {
+  // Connect to WiFi network
+  esp8266.println("AT+CWJAP=\"your_wifi_ssid\",\"your_wifi_password\"");
+  if (esp8266.find("OK")) {
+    Serial.println("Connected to WiFi network");
+  } else {
+    Serial.println("Connection to WiFi network failed");
+    while (1);
+  }
+
+  // Set multiple connections to false
+  esp8266.println("AT+CIPMUX=0");
+}
